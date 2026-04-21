@@ -159,7 +159,7 @@
         <div class="delivery-row">
           <el-input
             v-model="deliveryAddress"
-            placeholder="请输入详细地址，例如：四川省南充市顺庆区××路××号"
+            placeholder="请输入详细地址，例如：深圳市龙华区××路××号"
             class="delivery-field"
             size="large"
             clearable
