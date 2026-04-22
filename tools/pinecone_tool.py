@@ -16,6 +16,8 @@ from pinecone import Pinecone
 from pinecone import ServerlessSpec
 from http import HTTPStatus
 
+from tools.embedding_cache import get_embedding_cache
+
 
 load_dotenv()
 
@@ -115,6 +117,12 @@ class   PineconeVectorDB:
                 logger.error("dashscope api_key  not found!")
                 return None
 
+            cache = get_embedding_cache()
+            cached = cache.get(content, self.embedding_model, self.dimension)
+            if cached is not None:
+                logger.debug("embedding cache hit (len=%s)", len(cached))
+                return cached
+
             # 2.发送请求
             resp = dashscope.TextEmbedding.call(
                 api_key=self.dashscope_api_key,
@@ -125,8 +133,11 @@ class   PineconeVectorDB:
 
             # 3.解析响应结果，提取要的向量列表值
             if resp.status_code == HTTPStatus.OK:
-                logger.info(f"文本{content}向量化成功")
-                return  resp.get('output').get('embeddings')[0].get('embedding')
+                logger.debug("文本向量化成功（已写入缓存）")
+                vec = resp.get('output').get('embeddings')[0].get('embedding')
+                if vec and len(vec) == self.dimension:
+                    cache.put(content, self.embedding_model, self.dimension, vec)
+                return vec
             else:
                 # dashscope 的返回对象通常包含：status_code / code / message / request_id 等信息
                 status_code = getattr(resp, "status_code", None)

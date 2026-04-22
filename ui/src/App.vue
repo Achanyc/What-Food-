@@ -54,17 +54,19 @@
                 :class="msg.role === 'user' ? 'bubble-user' : 'bubble-bot'"
               >
                 <template v-if="msg.role === 'user'">{{ msg.content }}</template>
-                <div v-else class="formatted-content" v-html="formatMarkdown(msg.content)" />
-              </div>
-            </div>
-
-            <div v-if="chatLoading" class="msg-row msg-row-bot typing-row">
-              <div class="msg-meta">点餐助手</div>
-              <div class="bubble-bot typing-bubble">
-                <span class="typing-dot" />
-                <span class="typing-dot" />
-                <span class="typing-dot" />
-                <span class="typing-text">正在为您思考…</span>
+                <div v-else class="formatted-content">
+                  <!-- 流式回复：仅一条助手气泡；意图分析阶段在同一气泡内显示加载，避免与下方重复「点餐助手」 -->
+                  <div
+                    v-if="chatLoading && !msg.content && idx === chatMessages.length - 1"
+                    class="typing-bubble typing-bubble--inline"
+                  >
+                    <span class="typing-dot" />
+                    <span class="typing-dot" />
+                    <span class="typing-dot" />
+                    <span class="typing-text">正在为您思考…</span>
+                  </div>
+                  <div v-else v-html="formatMarkdown(msg.content)" />
+                </div>
               </div>
             </div>
           </div>
@@ -113,7 +115,7 @@
 
           <div v-if="menuItems.length > 0" class="menu-grid">
             <article
-              v-for="item in menuItems"
+              v-for="item in displayedMenuItems"
               :key="item.id"
               class="menu-card"
               :class="{ 'menu-card--hot': highlightedItems.includes(item.id.toString()) }"
@@ -269,6 +271,29 @@ export default {
     const menuLoading = ref(false)
     const highlightedItems = ref([])
 
+    /** 推荐菜按 AI 返回顺序排在列表最前，其余保持服务端原顺序 */
+    const displayedMenuItems = computed(() => {
+      const items = menuItems.value || []
+      const hl = highlightedItems.value || []
+      if (!hl.length) return items
+
+      const byId = new Map(items.map((x) => [String(x.id), x]))
+      const front = []
+      const seenInFront = new Set()
+      for (const rawId of hl) {
+        const sid = String(rawId)
+        if (seenInFront.has(sid)) continue
+        const dish = byId.get(sid)
+        if (dish) {
+          front.push(dish)
+          seenInFront.add(sid)
+        }
+      }
+      const frontIds = new Set(front.map((x) => String(x.id)))
+      const rest = items.filter((x) => !frontIds.has(String(x.id)))
+      return [...front, ...rest]
+    })
+
     function formatMarkdown(text) {
       if (!text) return ''
       return String(text)
@@ -319,45 +344,40 @@ export default {
 
       chatLoading.value = true
       chatMessages.value.push({ role: 'user', content: q })
+      chatMessages.value.push({ role: 'assistant', content: '' })
+      const assistantIdx = chatMessages.value.length - 1
 
       try {
-        const response = await chatAPI.sendMessage(q)
+        await chatAPI.sendMessageStream(q, (ev) => {
+          if (!ev || typeof ev !== 'object') return
 
-        let assistantText =
-          response.recommendation ||
-          response.recommdation ||
-          response.response ||
-          ''
+          if (ev.type === 'meta' && ev.menu_ids?.length) {
+            highlightRecommendedItems(ev.menu_ids)
+          }
 
-        if (
-          assistantText &&
-          typeof assistantText === 'object' &&
-          assistantText !== null &&
-          !Array.isArray(assistantText)
-        ) {
-          assistantText = JSON.stringify(assistantText)
-        }
+          if (ev.type === 'delta' && ev.content) {
+            chatMessages.value[assistantIdx].content += ev.content
+          }
 
-        if (!assistantText) {
-          assistantText = '抱歉，暂时无法理解您的问题，请换一种说法试试。'
-        }
+          if (ev.type === 'done' && ev.menu_ids?.length) {
+            highlightRecommendedItems(ev.menu_ids)
+          }
 
-        chatMessages.value.push({ role: 'assistant', content: assistantText })
+          if (ev.type === 'error') {
+            chatMessages.value[assistantIdx].content += `\n⚠️ ${ev.message || '流式输出异常'}`
+          }
+        })
 
-        if (response.menu_ids && response.menu_ids.length) {
-          highlightRecommendedItems(response.menu_ids)
-        } else {
-          highlightedItems.value = []
+        if (!chatMessages.value[assistantIdx].content?.trim()) {
+          chatMessages.value[assistantIdx].content =
+            '抱歉，暂时无法理解您的问题，请换一种说法试试。'
         }
       } catch (error) {
         const errMsg =
           error?.message ||
           error?.response?.data?.detail ||
           '请求失败，请确认后端已启动或稍后重试。'
-        chatMessages.value.push({
-          role: 'assistant',
-          content: `⚠️ ${errMsg}`
-        })
+        chatMessages.value[assistantIdx].content = `⚠️ ${errMsg}`
       } finally {
         chatLoading.value = false
       }
@@ -417,6 +437,7 @@ export default {
       deliveryAlertTitle,
       deliveryAlertDesc,
       menuItems,
+      displayedMenuItems,
       menuLoading,
       highlightedItems,
       sendChatQuery,
@@ -685,6 +706,11 @@ export default {
   gap: 6px;
   color: var(--color-muted);
   font-size: 0.85rem;
+}
+
+/* 嵌入在助手气泡内的加载态，避免出现第二个「点餐助手」行 */
+.typing-bubble--inline {
+  min-height: 1.25rem;
 }
 
 .typing-dot {

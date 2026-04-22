@@ -45,6 +45,50 @@ export const chatAPI = {
   // 发送聊天消息
   sendMessage: async (query) => {
     return await api.post('/chat', { query })
+  },
+
+  /**
+   * SSE 流式对话：POST /chat/stream，逐条解析 data: JSON
+   * @param {string} query
+   * @param {(event: object) => void} onEvent
+   */
+  sendMessageStream: async (query, onEvent) => {
+    const res = await fetch('/api/chat/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query })
+    })
+
+    if (!res.ok || !res.body) {
+      const text = await res.text().catch(() => '')
+      throw new Error(text || `HTTP ${res.status}`)
+    }
+
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+
+      let idx
+      while ((idx = buffer.indexOf('\n\n')) !== -1) {
+        const block = buffer.slice(0, idx)
+        buffer = buffer.slice(idx + 2)
+        const line = block.trim()
+        if (!line.startsWith('data:')) continue
+        const payload = line.slice(5).trim()
+        if (!payload) continue
+        try {
+          const ev = JSON.parse(payload)
+          if (typeof onEvent === 'function') onEvent(ev)
+        } catch {
+          // ignore malformed chunk
+        }
+      }
+    }
   }
 }
 

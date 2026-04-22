@@ -8,7 +8,10 @@
 """
 
 
+import json
+
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel  
 from typing import List,Optional    
 from tools.amap_tool import PathInputMode
@@ -189,3 +192,26 @@ async def chat_endpoint(request: ChatRequest):
         raise HTTPException(
             status_code=500, detail=f"智能对话接口异常: {e}"
             )
+
+
+@app.post("/chat/stream")
+async def chat_stream_endpoint(request: ChatRequest):
+    """智能对话 SSE：意图路由后开始流式输出正文（Embedding 可走缓存）。"""
+    def generate():
+        from service.diancan_service import iter_chat_sse_events
+
+        try:
+            for ev in iter_chat_sse_events(request.query):
+                yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

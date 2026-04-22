@@ -3,6 +3,7 @@
 """
 
 from ast import main
+from tools.menu_context_display import sanitize_menu_contents_for_prompt
 from tools.pinecone_tool import search_menu_data_with_id
 from langchain_core.tools import tool,ToolException
 from tools.llm_tool import call_llm
@@ -95,7 +96,8 @@ def menu_inquiry(query: str, context: str) -> str:
         # 1. 利用文本嵌入模型，从向量数据库中检索菜品信息
         similar_results = search_menu_data_with_id(query)
         if similar_results and similar_results['contents']:
-            menu_contents_context = "\n".join(f" -{item}" for item in similar_results['contents'])
+            display_lines = sanitize_menu_contents_for_prompt(similar_results["contents"])
+            menu_contents_context = "\n".join(f" -{item}" for item in display_lines)
             full_query = f"当前从向量数据库中检索到的菜品信息:\n{menu_contents_context} \n\n 用户问题: \n{query} \n\n ,请基于以上检索到的信息，回答用户提出的相关问题"
         else:
             full_query = f"暂无相关菜品信息,用户问题: {query} \n\n ,请基于一般的菜品信息，回答用户提出的相关问题"

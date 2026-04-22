@@ -8,8 +8,9 @@ llm_tool模块
 
 
 import os
+from typing import Iterator
+
 from langchain_openai import ChatOpenAI
-from langchain.chat_models import init_chat_model
 from langchain_core.prompts import ChatPromptTemplate
 from dotenv import load_dotenv
 
@@ -66,6 +67,37 @@ def call_llm(query:str, system_prompt:str)->str:
     response = chain.invoke({"system_instruction": system_prompt, "query": query})
 
     return response.content
+
+
+def stream_llm(query: str, system_prompt: str) -> Iterator[str]:
+    """
+    流式调用 LLM，按文本片段 yield（用于 SSE）。
+    """
+    api_key = os.getenv("DASHSCOPE_API_KEY")
+    api_base = os.getenv("DASHSCOPE_API_BASE")
+    model_name = os.getenv("LLM_MODE")
+
+    if not api_key or not api_base or not model_name:
+        raise ValueError("DASHSCOPE_API_KEY, DASHSCOPE_API_BASE, LLM_MODE 环境变量未设置")
+
+    llm = ChatOpenAI(
+        model_name=model_name,
+        openai_api_key=api_key,
+        openai_api_base=api_base,
+        streaming=True,
+    )
+
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", "{system_instruction}"),
+        ("human", "{query}")
+    ])
+
+    chain = prompt | llm
+
+    for chunk in chain.stream({"system_instruction": system_prompt, "query": query}):
+        piece = getattr(chunk, "content", None) or ""
+        if piece:
+            yield piece
 
 
 if __name__ == "__main__":
